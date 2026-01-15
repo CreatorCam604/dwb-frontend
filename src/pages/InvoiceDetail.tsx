@@ -1,11 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+
 import {
   fetchInvoice,
   updateInvoiceLineItems,
   addInvoicePayment,
-  type InvoiceLineItem,
 } from "../api/invoices";
+
+import {
+  fetchQuote,
+  updateQuoteLineItems,
+  convertQuoteToInvoice,
+} from "../api/quotes";
+
+type LineItem = {
+  description: string;
+  qty: number;
+  unit_price: number;
+};
 
 type Payment = {
   amount: number;
@@ -13,11 +25,15 @@ type Payment = {
   note?: string;
 };
 
-export default function InvoiceDetail() {
+type Props = {
+  mode: "invoice" | "quote";
+};
+
+export default function InvoiceDetail({ mode }: Props) {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
 
-  const [items, setItems] = useState<InvoiceLineItem[]>([]);
+  const [items, setItems] = useState<LineItem[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -25,33 +41,57 @@ export default function InvoiceDetail() {
   const [paymentNote, setPaymentNote] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [converting, setConverting] = useState(false);
 
-  // ---------------- LOAD INVOICE ----------------
+  /* ================= LOAD ================= */
   useEffect(() => {
     if (!invoiceId) return;
 
+    setLoading(true);
+
     const load = async () => {
       try {
-        const invoice = await fetchInvoice(invoiceId);
-        setItems(invoice.line_items ?? []);
-        setPayments(invoice.payments ?? []);
-        setJobId(invoice.job_id);
+        if (mode === "invoice") {
+          const invoice = await fetchInvoice(invoiceId);
+
+          setItems(
+            (invoice.line_items ?? []).map((i) => ({
+              description: i.description ?? "",
+              qty: Number(i.qty),
+              unit_price: Number(i.unit_price),
+            }))
+          );
+
+          setPayments(invoice.payments ?? []);
+          setJobId(invoice.job_id);
+        } else {
+          const quote = await fetchQuote(invoiceId);
+
+          setItems(
+            (quote.line_items ?? []).map((i) => ({
+              description: i.description ?? "",
+              qty: Number(i.qty),
+              unit_price: Number(i.unit_price),
+            }))
+          );
+
+          setPayments([]); // quotes never have payments
+          setJobId(quote.job_id);
+        }
       } catch (err) {
-        console.error("Failed to load invoice", err);
+        console.error("Failed to load document", err);
+        alert("Failed to load. Please refresh and try again.");
       } finally {
         setLoading(false);
       }
     };
 
     load();
-  }, [invoiceId]);
+  }, [invoiceId, mode]);
 
-  // ---------------- LINE ITEMS ----------------
-  function updateItem(
-    index: number,
-    field: keyof InvoiceLineItem,
-    value: any
-  ) {
+  /* ================= LINE ITEMS ================= */
+  function updateItem(index: number, field: keyof LineItem, value: any) {
     const next = [...items];
     next[index] = { ...next[index], [field]: value };
     setItems(next);
@@ -65,54 +105,111 @@ export default function InvoiceDetail() {
     setItems(items.filter((_, i) => i !== index));
   }
 
-  // ---------------- PAYMENTS ----------------
-  async function addPayment() {
+  /* ================= VALIDATION ================= */
+  const hasAtLeastOneValidLine = useMemo(() => {
+    if (!items || items.length === 0) return false;
+
+    return items.some(
+      (i) => i.description.trim().length > 0 && Number(i.qty) > 0
+    );
+  }, [items]);
+
+  /* ================= PAYMENTS (INVOICE ONLY) ================= */
+  async function addPaymentHandler() {
+    if (mode !== "invoice") return;
     if (!invoiceId || !paymentAmount) return;
 
-    await addInvoicePayment(invoiceId, {
-      amount: Number(paymentAmount),
-      note: paymentNote || undefined,
-    });
+    try {
+      await addInvoicePayment(invoiceId, {
+        amount: Number(paymentAmount),
+        note: paymentNote || undefined,
+      });
 
-    const invoice = await fetchInvoice(invoiceId);
-    setPayments(invoice.payments ?? []);
+      const updated = await fetchInvoice(invoiceId);
+      setPayments(updated.payments ?? []);
 
-    setPaymentAmount("");
-    setPaymentNote("");
+      setPaymentAmount("");
+      setPaymentNote("");
+    } catch (err) {
+      console.error("Failed to add payment", err);
+      alert("Failed to add payment. Please try again.");
+    }
   }
 
-  // ---------------- SAVE ----------------
+  /* ================= SAVE ================= */
   async function save() {
     if (!invoiceId || !jobId) return;
 
-    await updateInvoiceLineItems(invoiceId, items);
+    if (!hasAtLeastOneValidLine) {
+      alert("Please add at least one line item with a description and qty.");
+      return;
+    }
 
-    navigate(`/jobs/${jobId}`, {
-      state: { tab: "invoices" },
-    });
+    setSaving(true);
+    try {
+      if (mode === "invoice") {
+        await updateInvoiceLineItems(invoiceId, items);
+      } else {
+        await updateQuoteLineItems(invoiceId, items);
+      }
+
+      navigate(`/jobs/${jobId}`, {
+        state: { tab: mode === "quote" ? "quotes" : "invoices" },
+      });
+    } catch (err) {
+      console.error("Failed to save", err);
+      alert("Save failed. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  // ---------------- TOTALS ----------------
+  /* ================= CONVERT ================= */
+  async function convert() {
+    if (mode !== "quote" || !invoiceId || !jobId) return;
+
+    if (!hasAtLeastOneValidLine) {
+      alert("Please add at least one line item before converting.");
+      return;
+    }
+
+    setConverting(true);
+    try {
+      await convertQuoteToInvoice(invoiceId);
+
+      navigate(`/jobs/${jobId}`, {
+        state: { tab: "invoices" },
+      });
+    } catch (err) {
+      console.error("Failed to convert quote", err);
+      alert("Convert failed. Please try again.");
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  /* ================= TOTALS ================= */
   const total = items.reduce(
-    (sum, i) => sum + i.qty * i.unit_price,
+    (sum, i) => sum + Number(i.qty) * Number(i.unit_price),
     0
   );
 
   const paid = payments.reduce(
-    (sum, p) => sum + p.amount,
+    (sum, p) => sum + Number(p.amount),
     0
   );
 
   const outstanding = total - paid;
 
-  // ---------------- RENDER ----------------
   if (loading) {
     return <div className="p-6">Loading…</div>;
   }
 
   return (
     <div className="p-6 max-w-4xl space-y-8">
-      <h1 className="text-2xl font-bold">Invoice</h1>
+      <h1 className="text-2xl font-bold">
+        {mode === "quote" ? "Quote" : "Invoice"}
+      </h1>
 
       {/* ---------- LINE ITEMS ---------- */}
       <table className="w-full border">
@@ -160,7 +257,7 @@ export default function InvoiceDetail() {
                 />
               </td>
               <td className="p-2 border">
-                R {(item.qty * item.unit_price).toFixed(2)}
+                R {(Number(item.qty) * Number(item.unit_price)).toFixed(2)}
               </td>
               <td className="p-2 border text-center">
                 <button
@@ -175,68 +272,90 @@ export default function InvoiceDetail() {
         </tbody>
       </table>
 
-      <button
-        className="bg-gray-200 px-3 py-1"
-        onClick={addItem}
-      >
+      <button className="bg-gray-200 px-3 py-1" onClick={addItem}>
         + Add Line
       </button>
 
       {/* ---------- PAYMENTS ---------- */}
-      <div className="border rounded p-4 space-y-3 bg-white">
-        <h2 className="font-semibold text-lg">Payments</h2>
+      {mode === "invoice" && (
+        <div className="border rounded p-4 space-y-3 bg-white">
+          <h2 className="font-semibold text-lg">Payments</h2>
 
-        {payments.length === 0 && (
-          <p className="text-gray-500">No payments logged</p>
-        )}
+          {payments.length === 0 && (
+            <p className="text-gray-500">No payments logged</p>
+          )}
 
-        {payments.map((p, i) => (
-          <div key={i} className="flex justify-between text-sm">
-            <span>{new Date(p.payment_date).toLocaleDateString()}</span>
-            <span>R {p.amount.toFixed(2)}</span>
-            <span className="text-gray-500">{p.note}</span>
+          {payments.map((p, i) => (
+            <div key={i} className="flex justify-between text-sm">
+              <span>
+                {new Date(p.payment_date).toLocaleDateString()}
+              </span>
+              <span>R {Number(p.amount).toFixed(2)}</span>
+              <span className="text-gray-500">{p.note}</span>
+            </div>
+          ))}
+
+          <div className="flex gap-2 mt-3">
+            <input
+              type="number"
+              className="border p-2 w-32"
+              placeholder="Amount"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+            />
+            <input
+              className="border p-2 flex-1"
+              placeholder="Note (optional)"
+              value={paymentNote}
+              onChange={(e) => setPaymentNote(e.target.value)}
+            />
+            <button
+              onClick={addPaymentHandler}
+              className="bg-green-600 text-white px-4"
+            >
+              Add
+            </button>
           </div>
-        ))}
-
-        <div className="flex gap-2 mt-3">
-          <input
-            type="number"
-            className="border p-2 w-32"
-            placeholder="Amount"
-            value={paymentAmount}
-            onChange={(e) => setPaymentAmount(e.target.value)}
-          />
-          <input
-            className="border p-2 flex-1"
-            placeholder="Note (optional)"
-            value={paymentNote}
-            onChange={(e) => setPaymentNote(e.target.value)}
-          />
-          <button
-            onClick={addPayment}
-            className="bg-green-600 text-white px-4"
-          >
-            Add
-          </button>
         </div>
-      </div>
+      )}
 
       {/* ---------- TOTALS ---------- */}
       <div className="text-right space-y-1">
         <div>Total: R {total.toFixed(2)}</div>
-        <div>Paid: R {paid.toFixed(2)}</div>
+
+        {mode === "invoice" && (
+          <div>Paid: R {paid.toFixed(2)}</div>
+        )}
+
         <div className="font-bold">
-          Outstanding: R {outstanding.toFixed(2)}
+          {mode === "invoice"
+            ? `Outstanding: R ${outstanding.toFixed(2)}`
+            : `Quote Total: R ${total.toFixed(2)}`}
         </div>
       </div>
 
-      {/* ---------- SAVE ---------- */}
-      <button
-        className="bg-blue-600 text-white px-4 py-2"
-        onClick={save}
-      >
-        Save Invoice
-      </button>
+      {/* ---------- ACTIONS ---------- */}
+      <div className="flex gap-3">
+        <button
+          className="bg-blue-600 text-white px-4 py-2 disabled:opacity-60"
+          onClick={save}
+          disabled={saving}
+        >
+          {saving
+            ? "Saving…"
+            : `Save ${mode === "quote" ? "Quote" : "Invoice"}`}
+        </button>
+
+        {mode === "quote" && (
+          <button
+            className="bg-green-600 text-white px-4 py-2 disabled:opacity-60"
+            onClick={convert}
+            disabled={converting}
+          >
+            {converting ? "Converting…" : "Convert to Invoice"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

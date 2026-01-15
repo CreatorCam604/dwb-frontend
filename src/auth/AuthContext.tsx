@@ -15,8 +15,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   async function login(email: string, password: string) {
-    const token = await loginApi(email, password);
-    localStorage.setItem("token", token);
+    // ⬇️ loginApi returns { token }
+    const result = await loginApi(email, password);
+
+    // ✅ store ONLY the token string
+    localStorage.setItem("token", result.token);
+
     setIsAuthenticated(true);
   }
 

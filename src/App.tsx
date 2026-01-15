@@ -30,7 +30,9 @@ export default function App() {
           <Route path="/clients" element={<Clients />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/jobs/:id" element={<JobDetail />} />
-          <Route path="/invoices/:invoiceId" element={<InvoiceDetail />} />
+          <Route path="/invoices/:invoiceId" element={<InvoiceDetail mode="invoice" />} />
+          <Route path="/quotes/:invoiceId" element={<InvoiceDetail mode="quote" />} />
+
         </Route>
       </Routes>
     </BrowserRouter>
