@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchQuotes, createQuote, downloadQuotePdf, type Quote } from "../../api/quotes";
+import {
+  fetchQuotes,
+  createQuote,
+  downloadQuotePdf,
+  type Quote,
+} from "../../api/quotes";
 
 export default function JobQuotes({ jobId }: { jobId: string }) {
   const [quotes, setQuotes] = useState<Quote[]>([]);
@@ -26,14 +31,20 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
     navigate(`/quotes/${quote.id}`);
   }
 
-  async function onPdf(id: string, number: number) {
-    const res = await downloadQuotePdf(id);
-    const url = window.URL.createObjectURL(res.data);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `Quote-${number}.pdf`;
-    a.click();
-    window.URL.revokeObjectURL(url);
+  async function onPdf(e: React.MouseEvent, id: string, number: number) {
+    e.stopPropagation(); // 🔑 CRITICAL FIX
+
+    try {
+      const res = await downloadQuotePdf(id);
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Quote-${number}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert("PDF not available yet");
+    }
   }
 
   if (loading) return <div className="text-gray-500">Loading…</div>;
@@ -64,20 +75,19 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
           </thead>
           <tbody>
             {quotes.map((q) => (
-              <tr key={q.id} className="hover:bg-gray-50">
-                <td
-                  className="p-2 border cursor-pointer"
-                  onClick={() => navigate(`/quotes/${q.id}`)}
-                >
-                  {q.quote_number}
-                </td>
+              <tr
+                key={q.id}
+                className="hover:bg-gray-50 cursor-pointer"
+                onClick={() => navigate(`/quotes/${q.id}`)}
+              >
+                <td className="p-2 border">{q.quote_number}</td>
                 <td className="p-2 border">
                   {new Date(q.created_at).toLocaleDateString()}
                 </td>
                 <td className="p-2 border">
                   <button
                     className="text-blue-600 hover:underline"
-                    onClick={() => onPdf(q.id, q.quote_number)}
+                    onClick={(e) => onPdf(e, q.id, q.quote_number)}
                   >
                     PDF
                   </button>
