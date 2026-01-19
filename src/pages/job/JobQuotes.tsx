@@ -4,6 +4,7 @@ import {
   fetchQuotes,
   createQuote,
   downloadQuotePdf,
+  deleteQuote,
   type Quote,
 } from "../../api/quotes";
 
@@ -12,6 +13,7 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
+  /* ================= LOAD ================= */
   async function load() {
     setLoading(true);
     try {
@@ -26,12 +28,18 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
     if (jobId) load();
   }, [jobId]);
 
+  /* ================= CREATE ================= */
   async function onCreate() {
     const quote = await createQuote(jobId);
     navigate(`/quotes/${quote.id}`);
   }
 
-  async function onPdf(e: React.MouseEvent, id: string, number: number) {
+  /* ================= PDF ================= */
+  async function onPdf(
+    e: React.MouseEvent,
+    id: string,
+    number: number
+  ) {
     e.stopPropagation(); // 🔑 CRITICAL FIX
 
     try {
@@ -47,6 +55,25 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
     }
   }
 
+  /* ================= DELETE ================= */
+  async function onDeleteQuote(
+    e: React.MouseEvent,
+    quoteId: string
+  ) {
+    e.stopPropagation(); // prevent row navigation
+
+    if (!confirm("Delete this quote?")) return;
+
+    try {
+      await deleteQuote(quoteId);
+      await load(); // refresh list
+    } catch (err) {
+      console.error("Failed to delete quote", err);
+      alert("Failed to delete quote");
+    }
+  }
+
+  /* ================= UI ================= */
   if (loading) return <div className="text-gray-500">Loading…</div>;
 
   return (
@@ -62,7 +89,9 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
         </button>
       </div>
 
-      {quotes.length === 0 && <p className="text-gray-500">No quotes yet</p>}
+      {quotes.length === 0 && (
+        <p className="text-gray-500">No quotes yet</p>
+      )}
 
       {quotes.length > 0 && (
         <table className="w-full border bg-white">
@@ -85,12 +114,25 @@ export default function JobQuotes({ jobId }: { jobId: string }) {
                   {new Date(q.created_at).toLocaleDateString()}
                 </td>
                 <td className="p-2 border">
-                  <button
-                    className="text-blue-600 hover:underline"
-                    onClick={(e) => onPdf(e, q.id, q.quote_number)}
-                  >
-                    PDF
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="text-blue-600 hover:underline"
+                      onClick={(e) =>
+                        onPdf(e, q.id, q.quote_number)
+                      }
+                    >
+                      PDF
+                    </button>
+
+                    <button
+                      className="text-red-600"
+                      onClick={(e) =>
+                        onDeleteQuote(e, q.id)
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

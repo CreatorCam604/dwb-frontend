@@ -5,6 +5,7 @@ import {
   fetchInvoice,
   updateInvoiceLineItems,
   addInvoicePayment,
+  deleteInvoicePayment,
 } from "../api/invoices";
 
 import {
@@ -20,6 +21,7 @@ type LineItem = {
 };
 
 type Payment = {
+  id: string;
   amount: number;
   payment_date: string;
   note?: string;
@@ -48,16 +50,15 @@ export default function InvoiceDetail({ mode }: Props) {
   useEffect(() => {
     if (!invoiceId) return;
 
-    setLoading(true);
-
     const load = async () => {
+      setLoading(true);
       try {
         if (mode === "invoice") {
           const invoice = await fetchInvoice(invoiceId);
 
           setItems(
-            (invoice.line_items ?? []).map((i) => ({
-              description: i.description ?? "",
+            invoice.line_items.map((i) => ({
+              description: i.description,
               qty: Number(i.qty),
               unit_price: Number(i.unit_price),
             }))
@@ -69,19 +70,16 @@ export default function InvoiceDetail({ mode }: Props) {
           const quote = await fetchQuote(invoiceId);
 
           setItems(
-            (quote.line_items ?? []).map((i) => ({
-              description: i.description ?? "",
+            quote.line_items.map((i) => ({
+              description: i.description,
               qty: Number(i.qty),
               unit_price: Number(i.unit_price),
             }))
           );
 
-          setPayments([]); // quotes never have payments
+          setPayments([]);
           setJobId(quote.job_id);
         }
-      } catch (err) {
-        console.error("Failed to load document", err);
-        alert("Failed to load. Please refresh and try again.");
       } finally {
         setLoading(false);
       }
@@ -91,7 +89,7 @@ export default function InvoiceDetail({ mode }: Props) {
   }, [invoiceId, mode]);
 
   /* ================= LINE ITEMS ================= */
-  function updateItem(index: number, field: keyof LineItem, value: any) {
+  function updateItem(index: number, field: keyof LineItem, value: number | string) {
     const next = [...items];
     next[index] = { ...next[index], [field]: value };
     setItems(next);
@@ -107,43 +105,38 @@ export default function InvoiceDetail({ mode }: Props) {
 
   /* ================= VALIDATION ================= */
   const hasAtLeastOneValidLine = useMemo(() => {
-    if (!items || items.length === 0) return false;
-
     return items.some(
       (i) => i.description.trim().length > 0 && Number(i.qty) > 0
     );
   }, [items]);
 
-  /* ================= PAYMENTS (INVOICE ONLY) ================= */
+  /* ================= PAYMENTS ================= */
   async function addPaymentHandler() {
-    if (mode !== "invoice") return;
     if (!invoiceId || !paymentAmount) return;
 
-    try {
-      await addInvoicePayment(invoiceId, {
-        amount: Number(paymentAmount),
-        note: paymentNote || undefined,
-      });
+    await addInvoicePayment(invoiceId, {
+      amount: Number(paymentAmount),
+      note: paymentNote || undefined,
+    });
 
-      const updated = await fetchInvoice(invoiceId);
-      setPayments(updated.payments ?? []);
+    const updated = await fetchInvoice(invoiceId);
+    setPayments(updated.payments ?? []);
 
-      setPaymentAmount("");
-      setPaymentNote("");
-    } catch (err) {
-      console.error("Failed to add payment", err);
-      alert("Failed to add payment. Please try again.");
-    }
+    setPaymentAmount("");
+    setPaymentNote("");
+  }
+
+  async function deletePaymentHandler(paymentId: string) {
+    if (!confirm("Delete this payment?")) return;
+
+    await deleteInvoicePayment(paymentId);
+    const updated = await fetchInvoice(invoiceId!);
+    setPayments(updated.payments ?? []);
   }
 
   /* ================= SAVE ================= */
   async function save() {
-    if (!invoiceId || !jobId) return;
-
-    if (!hasAtLeastOneValidLine) {
-      alert("Please add at least one line item with a description and qty.");
-      return;
-    }
+    if (!invoiceId || !jobId || !hasAtLeastOneValidLine) return;
 
     setSaving(true);
     try {
@@ -153,12 +146,7 @@ export default function InvoiceDetail({ mode }: Props) {
         await updateQuoteLineItems(invoiceId, items);
       }
 
-      navigate(`/jobs/${jobId}`, {
-        state: { tab: mode === "quote" ? "quotes" : "invoices" },
-      });
-    } catch (err) {
-      console.error("Failed to save", err);
-      alert("Save failed. Please try again.");
+      navigate(`/jobs/${jobId}`);
     } finally {
       setSaving(false);
     }
@@ -166,44 +154,30 @@ export default function InvoiceDetail({ mode }: Props) {
 
   /* ================= CONVERT ================= */
   async function convert() {
-    if (mode !== "quote" || !invoiceId || !jobId) return;
-
-    if (!hasAtLeastOneValidLine) {
-      alert("Please add at least one line item before converting.");
-      return;
-    }
+    if (!invoiceId || !jobId) return;
 
     setConverting(true);
     try {
       await convertQuoteToInvoice(invoiceId);
-
-      navigate(`/jobs/${jobId}`, {
-        state: { tab: "invoices" },
-      });
-    } catch (err) {
-      console.error("Failed to convert quote", err);
-      alert("Convert failed. Please try again.");
+      navigate(`/jobs/${jobId}`);
     } finally {
       setConverting(false);
     }
   }
 
-  /* ================= TOTALS ================= */
-  const total = items.reduce(
-    (sum, i) => sum + Number(i.qty) * Number(i.unit_price),
-    0
-  );
+  /* ================= TOTALS (FIXED) ================= */
+  const total = items.reduce((sum, i) => {
+    const line = Number(i.qty) * Number(i.unit_price);
+    return Number((sum + line).toFixed(2));
+  }, 0);
 
-  const paid = payments.reduce(
-    (sum, p) => sum + Number(p.amount),
-    0
-  );
+  const paid = payments.reduce((sum, p) => {
+    return Number((sum + Number(p.amount)).toFixed(2));
+  }, 0);
 
-  const outstanding = total - paid;
+  const outstanding = Number((total - paid).toFixed(2));
 
-  if (loading) {
-    return <div className="p-6">Loading…</div>;
-  }
+  if (loading) return <div className="p-6">Loading…</div>;
 
   return (
     <div className="p-6 max-w-4xl space-y-8">
@@ -211,7 +185,7 @@ export default function InvoiceDetail({ mode }: Props) {
         {mode === "quote" ? "Quote" : "Invoice"}
       </h1>
 
-      {/* ---------- LINE ITEMS ---------- */}
+      {/* LINE ITEMS */}
       <table className="w-full border">
         <thead className="bg-gray-100">
           <tr>
@@ -229,9 +203,7 @@ export default function InvoiceDetail({ mode }: Props) {
                 <input
                   className="w-full border p-1"
                   value={item.description}
-                  onChange={(e) =>
-                    updateItem(i, "description", e.target.value)
-                  }
+                  onChange={(e) => updateItem(i, "description", e.target.value)}
                 />
               </td>
               <td className="p-2 border">
@@ -239,10 +211,7 @@ export default function InvoiceDetail({ mode }: Props) {
                   type="number"
                   className="w-full border p-1"
                   value={item.qty}
-                  min={1}
-                  onChange={(e) =>
-                    updateItem(i, "qty", Number(e.target.value))
-                  }
+                  onChange={(e) => updateItem(i, "qty", Number(e.target.value))}
                 />
               </td>
               <td className="p-2 border">
@@ -250,20 +219,14 @@ export default function InvoiceDetail({ mode }: Props) {
                   type="number"
                   className="w-full border p-1"
                   value={item.unit_price}
-                  min={0}
                   onChange={(e) =>
                     updateItem(i, "unit_price", Number(e.target.value))
                   }
                 />
               </td>
-              <td className="p-2 border">
-                R {(Number(item.qty) * Number(item.unit_price)).toFixed(2)}
-              </td>
+              <td className="p-2 border">R {(item.qty * item.unit_price).toFixed(2)}</td>
               <td className="p-2 border text-center">
-                <button
-                  className="text-red-600"
-                  onClick={() => removeItem(i)}
-                >
+                <button className="text-red-600" onClick={() => removeItem(i)}>
                   ✕
                 </button>
               </td>
@@ -276,22 +239,22 @@ export default function InvoiceDetail({ mode }: Props) {
         + Add Line
       </button>
 
-      {/* ---------- PAYMENTS ---------- */}
+      {/* PAYMENTS */}
       {mode === "invoice" && (
-        <div className="border rounded p-4 space-y-3 bg-white">
+        <div className="border rounded p-4 bg-white space-y-3">
           <h2 className="font-semibold text-lg">Payments</h2>
 
-          {payments.length === 0 && (
-            <p className="text-gray-500">No payments logged</p>
-          )}
-
-          {payments.map((p, i) => (
-            <div key={i} className="flex justify-between text-sm">
-              <span>
-                {new Date(p.payment_date).toLocaleDateString()}
-              </span>
+          {payments.map((p) => (
+            <div key={p.id} className="flex justify-between items-center text-sm">
+              <span>{new Date(p.payment_date).toLocaleDateString()}</span>
               <span>R {Number(p.amount).toFixed(2)}</span>
-              <span className="text-gray-500">{p.note}</span>
+              <span className="text-gray-500 flex-1 ml-2">{p.note}</span>
+              <button
+                className="text-red-600 ml-2"
+                onClick={() => deletePaymentHandler(p.id)}
+              >
+                ✕
+              </button>
             </div>
           ))}
 
@@ -305,28 +268,21 @@ export default function InvoiceDetail({ mode }: Props) {
             />
             <input
               className="border p-2 flex-1"
-              placeholder="Note (optional)"
+              placeholder="Note"
               value={paymentNote}
               onChange={(e) => setPaymentNote(e.target.value)}
             />
-            <button
-              onClick={addPaymentHandler}
-              className="bg-green-600 text-white px-4"
-            >
+            <button onClick={addPaymentHandler} className="bg-green-600 text-white px-4">
               Add
             </button>
           </div>
         </div>
       )}
 
-      {/* ---------- TOTALS ---------- */}
+      {/* TOTALS */}
       <div className="text-right space-y-1">
         <div>Total: R {total.toFixed(2)}</div>
-
-        {mode === "invoice" && (
-          <div>Paid: R {paid.toFixed(2)}</div>
-        )}
-
+        {mode === "invoice" && <div>Paid: R {paid.toFixed(2)}</div>}
         <div className="font-bold">
           {mode === "invoice"
             ? `Outstanding: R ${outstanding.toFixed(2)}`
@@ -334,25 +290,23 @@ export default function InvoiceDetail({ mode }: Props) {
         </div>
       </div>
 
-      {/* ---------- ACTIONS ---------- */}
+      {/* ACTIONS */}
       <div className="flex gap-3">
         <button
-          className="bg-blue-600 text-white px-4 py-2 disabled:opacity-60"
+          className="bg-blue-600 text-white px-4 py-2"
           onClick={save}
           disabled={saving}
         >
-          {saving
-            ? "Saving…"
-            : `Save ${mode === "quote" ? "Quote" : "Invoice"}`}
+          {saving ? "Saving…" : "Save"}
         </button>
 
         {mode === "quote" && (
           <button
-            className="bg-green-600 text-white px-4 py-2 disabled:opacity-60"
+            className="bg-green-600 text-white px-4 py-2"
             onClick={convert}
             disabled={converting}
           >
-            {converting ? "Converting…" : "Convert to Invoice"}
+            Convert to Invoice
           </button>
         )}
       </div>

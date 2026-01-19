@@ -68,3 +68,7 @@ export function downloadQuotePdf(quoteId: string) {
     responseType: "blob",
   });
 }
+
+export async function deleteQuote(quoteId: string) {
+  await api.delete(`/quotes/${quoteId}`);
+}

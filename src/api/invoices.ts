@@ -7,9 +7,10 @@ import { api } from "./http";
 export type Invoice = {
   id: string;
   invoice_number: number;
-  total: number;
+  total?: number;
   created_at: string;
 };
+
 
 export type InvoiceLineItem = {
   description: string;
@@ -18,6 +19,7 @@ export type InvoiceLineItem = {
 };
 
 export type InvoicePayment = {
+  id: string;
   amount: number;
   payment_date: string;
   note?: string;
@@ -77,15 +79,20 @@ export async function updateInvoiceLineItems(
 }
 
 /* =======================
-   PAYMENTS (NEW)
+   PAYMENTS
 ======================= */
 
 export async function addInvoicePayment(
   invoiceId: string,
-  input: {
-    amount: number;
-    note?: string;
-  }
+  input: { amount: number; note?: string }
 ) {
   await api.post(`/invoices/${invoiceId}/payments`, input);
+}
+
+export async function deleteInvoicePayment(paymentId: string) {
+  await api.delete(`/invoices/payments/${paymentId}`);
+}
+
+export async function deleteInvoice(invoiceId: string) {
+  await api.delete(`/invoices/${invoiceId}`);
 }
