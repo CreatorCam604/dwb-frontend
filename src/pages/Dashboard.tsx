@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api/http";
 
 type DashboardSummary = {
-  outstandingBalance: number;
-  quotedPipeline: number;
+  outstandingBalance: string;   // ← STRING, NOT number
+  quotedPipeline: string;
   quotesCount: number;
 };
 
@@ -43,4 +43,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
